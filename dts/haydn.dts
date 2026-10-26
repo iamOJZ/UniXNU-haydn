@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Xiaomi Redmi K40 Pro / K40 Pro+ / Mi 11i (haydn), Qualcomm SM8350.
+// Hardware values come from the device's own firmware FDT (/sys/firmware/fdt)
+// and the on-device GPT; see docs/haydn-hardware.md.
+/dts-v1/;
+/include/ "sm8350.dtsi"
+
+/ {
+    model = "Xiaomi Redmi K40 Pro";
+    compatible = "xiaomi,haydn", "qcom,sm8350";
+
+    memory@80000000 {
+        device_type = "memory";
+        // The ADT window published to XNU. The board has 12 GiB split as
+        // 0x80000000+0x37500000, 0x200000000+0x180000000, 0xc0000000+0x14000000;
+        // the low 2 GiB window matches [payload] dram_size.
+        reg = <0 0x80000000 0 0x80000000>;
+    };
+
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        splash_region: framebuffer@dfc00000 {
+            label = "cont_splash_region";
+            reg = <0 0xdfc00000 0 0x2300000>;
+            no-map;
+        };
+    };
+};
+
+// Big cores drive the P cluster, the four A55 cores the E cluster.
+&cpu0 { unixnu,cluster-type = "E"; };
+&cpu1 { unixnu,cluster-type = "E"; };
+&cpu2 { unixnu,cluster-type = "E"; };
+&cpu3 { unixnu,cluster-type = "E"; };
+&cpu4 { unixnu,cluster-type = "P"; };
+&cpu5 { unixnu,cluster-type = "P"; };
+&cpu6 { unixnu,cluster-type = "P"; };
+&cpu7 { unixnu,cluster-type = "P"; };
+
+// Storage and USB stay disabled until the matching native drivers exist.
+&ufs { status = "disabled"; };
+&ufsphy { status = "disabled"; };
+&usb0 { status = "disabled"; };

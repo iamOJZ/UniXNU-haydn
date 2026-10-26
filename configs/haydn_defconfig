@@ -1,0 +1,9 @@
+# haydn (SM8350) kernel configuration.
+# CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build script.
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+# Storage, GPU and display drivers are not adapted for haydn yet.
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set

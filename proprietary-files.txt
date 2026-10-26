@@ -1,0 +1,13 @@
+# Firmware inputs for haydn.
+#
+# Format: path|sha256, relative to .cache/firmware/. Prefix a path with "-" for
+# an optional file. @fetch points at a host prefix for the raw files.
+#
+# Current state: no haydn vendor UEFI binary set has been published yet, so the
+# firmware build reuses the venus (Mi 11, same SM8350) DXE binaries from
+# Binaries/haydn that make-haydnpkg.py copies as a first bring-up baseline.
+# Replace this list once the haydn XBL/UEFI volumes have been extracted from
+# /dev/block/by-name/xbl_a and hashed.
+
+# Touch controller firmware (Novatek / FocalTech) - pending identification.
+# splash / panel firmware - not required for the SimpleFbDxe path.

@@ -1,0 +1,7 @@
+[[source]]
+name = "sm8350"
+kind = "soc"
+git = "https://github.com/UniXNU/UniXNU-sm8350-common"
+# Pin a reviewed commit of the SM8350 shared support repository.
+# While the repository is only local, override it through local.toml.
+commit = "d8774e310311ff42e61b43157a2ec987b5de7efe"

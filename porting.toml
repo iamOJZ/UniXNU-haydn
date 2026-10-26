@@ -1,0 +1,409 @@
+schema_version = 1
+
+[device]
+name = "haydn"
+soc = "SM8350"
+os_profile = "ipados-17.7.11-21H461"
+summary = "Xiaomi Redmi K40 Pro (haydn, SM8350). UEFI firmware from Mu-Silicium LahainaPkg, UniXNU boot manager, board inputs taken from the device firmware FDT."
+
+[[area]]
+id = "configuration"
+status = "implemented"
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+paths = ["board.toml", "feeds.toml", "configs/**", ".gitmodules", ".github/**", ".gitignore"]
+inputs = [
+  "SoC SM8350 (lahaina), 4x Cortex-A55 + 3x Cortex-A78 + 1x Cortex-X1, 12 GiB LPDDR5.",
+  "Board device tree read back from the running firmware: /sys/firmware/fdt (793454 bytes) on Redmi K40 Pro haydnpro.",
+  "GPT of the UFS boot LUN and of LUN4 (userdata): first_lba 2785280, last_lba 61844474, 4096-byte logical blocks.",
+]
+configuration = [
+  "board.toml: soc = \"SM8350\", soc_source = \"sm8350\", os_profile = \"ipados-17.7.11-21H461\", kit = \"haydn\".",
+  "config_fragments = arch + soc:configs/sm8350.config + os:configs/ipados.config; device patch series empty.",
+  "dts/haydn.dts includes soc:dts/sm8350.dtsi, publishes a 2 GiB ADT memory window at 0x80000000 and the splash region at 0xdfc00000.",
+]
+procedure = [
+  "adb shell su -c \"cat /sys/firmware/fdt\" -> dtc -I dtb -O dts -> docs/haydn-fdt.dts",
+  "./unixnu defconfig haydn_defconfig -D ../UniXNU-haydn",
+  "./unixnu fetch && ./unixnu status --json && ./unixnu tree",
+]
+findings = [
+  "SM8350 keeps the SM8550 controller layout: GICv3 at 0x17a00000 with a 0x20000 redistributor stride, UFS host controller at 0x1d84000 with SPI 0x109, UFS PHY at 0x1d80000.",
+  "The modem reservation 0x8f000000-0x9f000000 removes the venus (Mi 11) DXE heap at 0x9b800000, so the haydn heap moves to 0xa0000000 and the UEFI window stays at 0x9fd00000-0xa0000000.",
+  "Userdata exposes 4096-byte logical blocks even though the boot LUN uses 512-byte blocks, so [userdata].lba_bytes = 4096.",
+]
+completion = [
+  "All source pins resolve; every selected component has a record; status shows the intended overrides and patch order.",
+]
+limits = [
+  "No haydn vendor UEFI binary set is published; Binaries/haydn is a copy of the venus SM8350 set.",
+]
+next_action = [
+  "Extract the haydn XBL/UEFI firmware volumes and replace Binaries/haydn with the board set.",
+]
+evidence = []
+
+[[area]]
+id = "firmware"
+status = "implemented"
+components = ["UniXNUDxe", "UniXNURamDiskDxe", "AdvancedLogDxe", "DarwinBoot"]
+paths = ["proprietary-files.txt", "scripts/extract-files.py", "scripts/gen-touch-firmware.py"]
+inputs = [
+  "Mu-Silicium (Project-Silicium) main, LahainaPkg provides SM8350 SEC/PEI/DXE platform support.",
+  "venusPkg used as the board template: same SoC, same vendor DXE driver inventory.",
+  "Redmi K40 Pro panel: qcom,mdss_dsi_k11_38_08_0a_dsc_cmd, 1080x2400, ABL splash framebuffer at 0xdfc00000.",
+]
+configuration = [
+  "Resources/Configs/haydn.toml: [uefi_fd] base 0x9fd00000 size 0x200000, header_version 0, kernel_offset 0x8000, tags_offset 0x1e00000, pagesize 4096.",
+  "Platforms/Xiaomi/haydnPkg/haydn.dsc: USE_CUSTOM_DISPLAY_DRIVER = 0 (SimpleFbDxe), SOC_TYPE = 0, FB 1080x2400x32.",
+  "DSC/FDF add UniXNUPkg (Application/Driver), DarwinBoot, and map HobLib + FdtLib.",
+]
+procedure = [
+  "python3 make-haydnpkg.py <uefi-haydn>   # generates haydnPkg from venusPkg",
+  "./unixnu build firmware --uefi ../uefi-haydn",
+  "./unixnu bootimg",
+]
+findings = [
+  "The SM8350 UEFI flow publishes the initrd handed over by ABL through the SEC HOB, so UniXNURamDiskDxe + DiskIoDxe + FAT must be in the firmware volume for the payload menu to appear.",
+  "haydn free System RAM below the modem hole starts at 0x9f000000, which is 13 MiB below the 0x9fd00000 FD base - enough for SEC heap, page tables and stack but not for the DXE heap.",
+]
+completion = [
+  "Firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations.",
+]
+limits = [
+  "Firmware boot on the device and framebuffer output are not yet confirmed; see the diagnostics area for the UART capture.",
+]
+next_action = [
+  "Boot out/haydn/ipados-17.7.11-21H461/haydn/boot/boot.img and capture ttyMSM0 at 115200 baud.",
+]
+evidence = []
+
+[[area]]
+id = "cpu"
+status = "implemented"
+components = []
+paths = ["package/CpuFreq*", "scripts/*armcpu*"]
+inputs = [
+  "8 cores: A55 (0xd05) at MPIDR 0x000/0x100/0x200/0x300, A78 (0xd41) at 0x400/0x500/0x600, X1 (0xd44) at 0x700.",
+  "GICv3 distributor 0x17a00000 (0x10000), redistributor 0x17a60000, stride 0x20000, 4 interrupt cells in the ADT encoding.",
+  "Architected timer, timebase 19200000 Hz, PSCI 1.0 over SMC.",
+]
+configuration = [
+  "soc:dts/sm8350.dtsi: cpus, psci, gic with unixnu,adt-name = \"intc\".",
+  "device:dts/haydn.dts marks cpu0-3 as the E cluster and cpu4-7 as the P cluster via unixnu,cluster-type.",
+  "haydn_defconfig: CONFIG_XNU_ARMCPU=y, CONFIG_XNU_ARM_DT_PLATFORM=y.",
+]
+procedure = [
+  "./unixnu build kernel",
+  "dtc -I dts -O dtb -i <soc>/dts -o haydn.dtb <device>/dts/haydn.dts",
+]
+findings = [
+  "The SM8350 GIC uses 4-cell interrupt descriptors in this tree, matching the shared SM8550 ADT encoder expectation.",
+  "No SoC patch is required for the first entry; the SM8550 native-smp-secondary series is not applied yet.",
+]
+completion = [
+  "Every enabled CPU reaches its entry checkpoint and timer/IPI handling works on each enabled CPU.",
+]
+limits = [
+  "Secondary core bring-up and IPI delivery are unverified on hardware.",
+]
+next_action = [
+  "Confirm the kernel entry checkpoint and then enable SMP with one secondary core at a time.",
+]
+evidence = []
+
+[[area]]
+id = "memory"
+status = "implemented"
+components = []
+paths = ["dts/**", "package/*Smmu*", "package/*Memory*", "scripts/*smmu*", "scripts/*memory*"]
+inputs = [
+  "DRAM: 0x80000000+0x37500000, 0x200000000+0x180000000, 0xc0000000+0x14000000 (12 GiB).",
+  "Reservations: HYP 6 MiB, cmd_db 128 KiB, XBL log, SMEM 2 MiB, CPUCP 1 MiB, CDSP secure heap 70 MiB, PIL 150.06 MiB, modem 256 MiB, QTEE 84 MiB, splash 35 MiB.",
+  "SMMU-500 blocks at 0x15000000 (APSS) and 0x3da0000-style GPU SMMU on SM8350.",
+]
+configuration = [
+  "haydnPkg/Library/MemoryMapLib/MemoryMapLib.c carries the board descriptor table used by SEC/PEI.",
+  "[payload] dram_size = 0x80000000; [payload.adt] owned_memory_size = 0x130000000.",
+]
+procedure = [
+  "python3 scripts/check-haydn.py (firmware preflight)",
+  "./unixnu payload",
+]
+findings = [
+  "Reserving the modem hole 0x8f000000-0x9f000000 is mandatory: the venus layout places the DXE heap inside it on haydn.",
+  "The splash reservation is 0xdfc00000+0x2300000, not the 0xb8000000 region used by sheng.",
+]
+completion = [
+  "All handoff regions are accounted for and each enabled DMA engine accesses its allocated range with the documented cache policy.",
+]
+limits = [
+  "Native SMMU (ArmSmmu4K) is not enabled: no driver claims the SMMU streams yet.",
+]
+next_action = [
+  "Validate that the UEFI memory map and the ADT window agree once firmware output is captured.",
+]
+evidence = []
+
+[[area]]
+id = "storage"
+status = "planned"
+components = []
+paths = ["drivers/ShengUfs", "scripts/*ufs*", "scripts/*storage*", "scripts/*userdata*", "scripts/*root*"]
+inputs = [
+  "UFS host controller 0x1d84000 (0x3000), ICE 0x1d88000, PHY 0x1d80000, SPI 0x109, 2 lanes per direction.",
+  "LUN4 userdata: 230699 MiB, GPT first_lba 2785280 last_lba 61844474 with 4096-byte blocks.",
+  "Boot LUN carries xbl/abl/boot_a/boot_b/dtbo_a/super; A/B slots active on _a.",
+]
+configuration = [
+  "[userdata] first_lba/last_lba/lba_bytes and OS + SystemOS windows.",
+]
+procedure = [
+  "./unixnu build userdata --dry-run (after the root volume UUID is known)",
+]
+findings = [
+  "There is no SM8350 native UFS driver: ShengUfs targets the SM8550 UFSHCI/GMU programming sequence and cannot be reused as-is.",
+]
+completion = [
+  "Host: register, clock, link and SMMU facts match the board inventory.",
+  "Reads: SCSI capacity, GPT and known blocks are correct; OS/SystemOS windows stay within userdata.",
+  "Root: the configured volume mounts and launchd starts. Persistence: writes survive reboot within the allocated Data region.",
+]
+limits = [
+  "Storage is not adapted; the payload is served from RAM, so storage is not needed for menu and loader checkpoints.",
+]
+next_action = [
+  "Port the UFS host controller + PHY init for lahaina, starting from the vendor UFSDxe register sequence.",
+]
+evidence = []
+
+[[area]]
+id = "display"
+status = "planned"
+components = []
+paths = ["package/*Display*", "package/*Framebuffer*", "package/*Backlight*", "package/AppleARMBacklight.cpp", "package/GeniI2c*", "scripts/*display*", "scripts/*gop*", "scripts/*framebuffer*"]
+inputs = [
+  "Panel qcom,mdss_dsi_k11_38_08_0a_dsc_cmd, 1080x2400 DSC command mode, splash region 0xdfc00000+0x2300000.",
+]
+configuration = [
+  "haydn.dsc: PcdFrameBufferWidth 1080, PcdFrameBufferHeight 2400, depth 32, USE_CUSTOM_DISPLAY_DRIVER = 0.",
+]
+procedure = [
+  "Check GOP output from the UEFI menu on the device panel.",
+]
+findings = [
+  "SimpleFbDxe reuses the ABL splash framebuffer, so no panel init is required for the first checkpoint.",
+]
+completion = [
+  "A known frame appears with correct geometry and colors, then userland presentation and backlight controls work.",
+]
+limits = [
+  "Backlight control, brightness and XNU display driver are not implemented for haydn.",
+]
+next_action = [
+  "Confirm the splash framebuffer geometry handed over by ABL matches 1080x2400.",
+]
+evidence = []
+
+[[area]]
+id = "input"
+status = "planned"
+components = []
+paths = ["drivers/ShengHidInput", "drivers/ShengNovatekTouch", "package/*Touch*", "package/*Button*", "scripts/*touch*", "scripts/*hid*"]
+inputs = [
+  "Touch controller and bus are not yet identified from the vendor kernel/DTB overlay.",
+]
+configuration = [
+  "No input component selected in [components].include.",
+]
+procedure = [
+  "Identify the touch IC from the vendor dtbo and sysfs input device names.",
+]
+findings = [
+  "Physical touch is not available, matching the venus experience where the panel touch was never adapted.",
+]
+completion = [
+  "Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce expected HID reports.",
+]
+limits = [
+  "not-applicable for the first checkpoint: the menu is driven from UART or a USB keyboard.",
+]
+next_action = [
+  "Identify the touch IC and its SPI/I2C bus from the vendor dtbo, then select QcomGeniSpi or GeniI2c.",
+]
+evidence = []
+
+[[area]]
+id = "gpu"
+status = "planned"
+components = []
+paths = ["package/*Gpu*", "package/*Gmu*", "package/*Adreno*", "scripts/*adreno*", "scripts/*gpu*", "scripts/*metal*", "scripts/*turnip*", "scripts/*air*"]
+inputs = [
+  "Adreno 660, GMU firmware from the vendor partition, GPU SMMU.",
+]
+configuration = [
+  "No GPU component: Adreno740/AdrenoMetal are A740/SM8550 specific.",
+]
+procedure = [
+  "n/a until a display path exists.",
+]
+findings = [
+  "Adreno 660 is not covered by the existing native Metal stack.",
+]
+completion = [
+  "GPU submissions complete, mapping/fence handling is correct, a known image renders, and the selected Metal client presents it.",
+]
+limits = [
+  "GPU acceleration is out of scope for this porting record.",
+]
+next_action = [
+  "Evaluate Adreno660 reuse only after the kernel and root volume checkpoints.",
+]
+evidence = []
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["drivers/Ath12kWifi", "package/*Wifi*", "package/MhiBoot*", "scripts/*wifi*", "scripts/*mhi*"]
+inputs = [
+  "WCN6855 (ath11k) over PCIe, firmware from the vendor partition.",
+]
+configuration = [
+  "No network component selected.",
+]
+procedure = [
+  "n/a",
+]
+findings = [
+  "Ath12kWifi targets a different chip family.",
+]
+completion = [
+  "Scanning, association, address configuration and sustained receive/transmit traffic pass with the selected firmware.",
+]
+limits = [
+  "Wi-Fi and Bluetooth are not available.",
+]
+next_action = [
+  "Inventory the WCN6855 firmware and PCIe window before selecting a driver.",
+]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["package/*Adsp*", "package/*Audio*", "package/*Gpr*", "package/QcomGlink*", "package/QcomMdt*", "package/QcomSmem*", "package/QcomSmp2p*", "scripts/*adsp*", "scripts/*audio*", "scripts/*gpr*"]
+inputs = [
+  "WCD9385 codec, ADSP with bolero macros.",
+]
+configuration = [
+  "No audio component selected.",
+]
+procedure = [
+  "n/a",
+]
+findings = [
+  "Audio depends on DSP bring-up which is not started.",
+]
+completion = [
+  "Each declared route carries the selected audio format through playback or capture and handles start/stop correctly.",
+]
+limits = [
+  "Audio is not available.",
+]
+next_action = [
+  "Defer until the DSP firmware and APR/GPR transport are evaluated.",
+]
+evidence = []
+
+[[area]]
+id = "power"
+status = "planned"
+components = []
+paths = ["package/*Battery*", "package/*Battmgr*", "package/*Power*", "package/*PlatformPower*", "package/QcomQmp*", "package/QcomRpmh*", "package/QcomScm.h", "scripts/*power*", "scripts/*battery*", "scripts/*pmgr*"]
+inputs = [
+  "PM8350/PM8350C/PMK8350 PMICs over RPMh, 4500 mAh battery.",
+]
+configuration = [
+  "[adt.defaults].u32 sleep-disabled = 1 is not set yet; suspend is not claimed.",
+]
+procedure = [
+  "n/a",
+]
+findings = [
+  "No PMIC or battery driver is adapted; the device stays in the state left by ABL.",
+]
+completion = [
+  "Declared power controls and battery readings match observations; each claimed sleep/resume transition restores its dependent peripherals.",
+]
+limits = [
+  "Battery, charging and thermal reporting are not available.",
+]
+next_action = [
+  "Add sleep-disabled = 1 to the ADT defaults before the first kernel boot attempt.",
+]
+evidence = []
+
+[[area]]
+id = "packaging"
+status = "implemented"
+components = ["XnuPrelink", "DarwinBoot"]
+paths = ["scripts/*payload*", "scripts/*image*", "scripts/*flash*", "patches/**", "package/Kit.toml"]
+inputs = [
+  "iPadOS 17.7.11 21H461 IPSW for iPad7,1 (profile default), trust cache, Data seed.",
+]
+configuration = [
+  "[payload] volume HAYDNESP, size_mib 208, loader firmware, kernel_args -v serial=3.",
+  "[payload.adt] chip_id 207, unique_chip_id required, root_match_volume_uuid placeholder until userdata is built.",
+  "[[bootimg.dtb_node]] recreates /reserved-memory/splash_region with the haydn address.",
+]
+procedure = [
+  "./unixnu ipsw fetch",
+  "./unixnu build payload",
+  "./unixnu bootimg",
+  "fastboot boot out/haydn/.../boot/boot.img",
+]
+findings = [
+  "BootShim receives FD_BASE/FD_SIZE from Resources/Configs/haydn.toml, so the config and MemoryMapLib must stay in sync.",
+]
+completion = [
+  "Kernel and prelink succeed, payload contains all declared inputs, and the boot image matches the bootloader format and size limit.",
+]
+limits = [
+  "No kernel or payload image has been produced on this host yet (Linux toolchain build in progress).",
+]
+next_action = [
+  "Build the kernel and payload once the Linux toolchain install finishes.",
+]
+evidence = []
+
+[[area]]
+id = "diagnostics"
+status = "implemented"
+components = []
+paths = ["scripts/check-*", "scripts/probe-*", "scripts/audit-*", "scripts/read-*", "scripts/prepare-*", "scripts/data/**", "package/tests/**", "package/*Tests*", "package/*Diagnostic*", "package/*Probe*", "package/Boot*", "package/linux-log/**", "unixnu.lock"]
+inputs = [
+  "SoC debug UART exposed on ttyMSM0 at 115200n8, wired to a USB serial adapter on host COM3.",
+  "Android cmdline confirms console=ttyMSM0,115200n8.",
+  "UniXNU AdvancedLogDxe + Tools menu for firmware log export via QR.",
+]
+configuration = [
+  "[payload] kernel_args include serial=3; firmware DSC/FDF include AdvancedLogDxe and PcdUniXNUDeviceModel = \"haydn\".",
+]
+procedure = [
+  "Capture COM3 with a serial terminal while running fastboot boot.",
+  "Menu: Tools -> Advanced Logger for the QR export.",
+]
+findings = [
+  "UART is the primary checkpoint channel for haydn, so firmware and DarwinBoot output do not depend on the panel.",
+]
+completion = [
+  "Each claimed milestone has a reproducible command, a matching source/image revision and an accessible result.",
+]
+limits = [
+  "No log capture has been recorded yet.",
+]
+next_action = [
+  "Record the first fastboot boot attempt log from COM3.",
+]
+evidence = []

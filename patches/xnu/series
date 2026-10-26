@@ -1,0 +1,4 @@
+# haydn device XNU patch series.
+#
+# Empty on purpose: the first bring-up targets UEFI + UniXNU menu + DarwinBoot
+# hand-off with the shared ARM64 and SM8350 patch series only.
