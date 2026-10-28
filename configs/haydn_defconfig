@@ -1,9 +1,24 @@
 # haydn (SM8350) kernel configuration.
 # CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build script.
+# Building the ordered component archives (RamBlock/VirtioMmioBlock/...) needs
+# this; it drives scripts/build-arm-driver.py over the compile records.
+CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 CONFIG_XNU_ARMVIRT_PLATFORM=n
-# Storage, GPU and display drivers are not adapted for haydn yet.
+# The BCM2837 personality compiles in the Raspberry Pi panic-log address
+# (0x3c0fc000) and PE_create_console maps and reads it unconditionally, which is
+# a data abort on SM8350. Switch to the device-tree "pram" node instead: this
+# board has no such node, so the check returns early.
+CONFIG_XNU_DT_PANIC_REGION=y
+# Publish a provider-less ApplePMGRNub from bsd_init so AMFI's
+# ConfigurationSettings latch succeeds (haydn_pmgr in package/).
+CONFIG_XNU_SHENG_PMGR=y
+# SM8350 UFS transport (fork of ShengUfs, drivers/ShengUfs). When enabled it
+# force-loads build/sheng-ufs/libShengUfs.a and defines XNU_NATIVE_UFS=1. Left
+# off until the macOS runner produces the storage ABI bindings it links against
+# (VirtioMmioBlock/RamBlock/VerifiedRoot -> interface-audit.json via dwarfdump).
 # CONFIG_XNU_NATIVE_UFS is not set
+# GPU and display drivers are not adapted for haydn yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set

@@ -9,12 +9,37 @@ description = "Xiaomi Redmi K40 Pro / K40 Pro+ / Mi 11i (haydn), SM8350"
 kit = "haydn"
 
 [components]
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "QcomGeniSpi", "ShengUfs"]
 
 [kernel]
 defconfig = "haydn_defconfig"
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8350.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:SoftwareAES",
+  "build-software-aes-bindings.py",
+  "component:AppleKeyStoreState",
+  "build-mockfs-fixture.py",
+  "build-libpthread-kernel.py",
+  "build-haydn-platform-power.py",
+  # SM8350 UFS transport (fork of ShengUfs, stream ID 0x60 -> 0xe0). The source
+  # is a git submodule at drivers/ShengUfs; for a local bring-up you can also
+  # point it at a checkout with --local-module driver:ShengUfs=PATH.
+  "component:ShengUfs",
+]
+# RamBlock/VirtioMmioBlock are left out for now: their original-class ABI
+# binding (build-virtio-mmio-bindings.py) needs scripts/audit-storage-interface.py,
+# which requires a macOS host (`xcrun --sdk macosx`, `xcrun dwarfdump`) and a
+# fetched refer/IOStorageFamily git tree. On SM8350 there is also no UFS driver
+# yet, so a block transport has nothing to sit on. Re-add these entries once a
+# storage device exists and the build runs on macOS:
+#   "component:RamBlock", "component:VirtioMmioBlock",
+#   "build-virtio-mmio-bindings.py --component RamBlock --directory build/ram-block",
+#   "build-virtio-mmio-bindings.py --component VirtioMmioBlock",
 
 [device_tree]
 source = "device:dts/haydn.dts"
@@ -37,18 +62,32 @@ BUILDID_STRING = "haydn-research"
 
 [payload]
 volume = "HAYDNESP"
-size_mib = 208
+size_mib = 64
 loader = "firmware"
 title = "Boot"
-dram_size = "0x80000000"
-panic_screen = true
+# One flat DRAM window from 0x80000000. Same value the reference haydn port
+# (xiaomi-haydn-dev/UniXNU-haydn) uses on this board family; the board has
+# 12 GiB split as 0x80000000+0x37500000 / 0xC0000000+0x140000000 /
+# 0x200000000+0x180000000, so 6 GiB stays inside real DRAM.
+# Must match the memory node in dts/haydn.dts byte for byte (mkadt checks it).
+dram_size = "0x180000000"
+# scripts/patch-xnu-entry-probe.py is not part of the pinned UniXNU checkout,
+# so the panic screen cannot be installed yet (same call as the reference port).
+panic_screen = false
 timeout = 3
-kernel_args = ["-v", "serial=3"]
+kernel_args = ["-v", "serial=3", "debug=0x14e", "boot-diag-resume=0", "-enable_kprintf_spam"]
 
 [payload.adt]
 # 0xCF matches the iPad7,1 platform identity seed used by the shared profile.
 chip_id = "207"
-owned_memory_size = "0x130000000"
+# The os_profile is iPadOS 17.7.11 (iPad7,1); the ADT must claim that
+# identity and emit /product + /buttons or MobileGestalt rejects the tree.
+ipad_identity = true
+# DarwinBoot contiguous window. 4 GiB is the value the reference haydn port
+# ships; the firmware reserves the boot-image range in DDR bank 0, so a larger
+# request risks not finding one contiguous block.
+# (2026-10-27T23:20 same round)
+owned_memory_size = "0x100000000"
 root_match_volume_uuid = "00000000-0000-0000-0000-000000000000"
 packed_data_ramdisk = false
 persistent_data = false
@@ -63,9 +102,21 @@ windows = [
   { name = "SystemOS", component = "Cryptex1,SystemOS" },
 ]
 
-[[bootimg.dtb_node]]
-path = "/reserved-memory/splash_region"
-props = [
-  { name = "label", type = "s", value = "cont_splash_region" },
-  { name = "reg", type = "x", value = ["0x0", "0xdfc00000", "0x0", "0x2300000"] },
-]
+[bootimg.image]
+# Qualcomm lahaina ABL layout: kernel 0x10008000, ramdisk 0x11000000,
+# tags 0x10000100, 2048-byte pages, header v1 (same as the Mi 11 / venus port).
+header_version = 1
+base = 0x10000000
+kernel_offset = 0x8000
+ramdisk_offset = 0x1000000
+second_offset = 0xf00000
+tags_offset = 0x100
+pagesize = 2048
+
+# No [[bootimg.dtb_node]]: the appended tree is the merged stock haydn DTB
+# (base + dtbo overlay) and already carries
+# /reserved-memory/splash_region { label = "cont_splash_region";
+#   reg = <0 0xdfc00000 0 0x2300000> }.
+# Adding the node again aborts bootimg with FDT_ERR_EXISTS (documented in the
+# reference port's PORTING.md). If the board DT is ever replaced by a mainline
+# tree, restore the node with exactly those values.

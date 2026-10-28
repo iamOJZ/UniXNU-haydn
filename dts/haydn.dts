@@ -8,13 +8,21 @@
 / {
     model = "Xiaomi Redmi K40 Pro";
     compatible = "xiaomi,haydn", "qcom,sm8350";
+    // Restated here: with the legacy /include/ directive dtc parses this
+    // file's nodes before it has merged the included root, so a 64-bit "reg"
+    // size below would be truncated to 32 bits without these two lines.
+    #address-cells = <2>;
+    #size-cells = <2>;
 
     memory@80000000 {
         device_type = "memory";
         // The ADT window published to XNU. The board has 12 GiB split as
-        // 0x80000000+0x37500000, 0x200000000+0x180000000, 0xc0000000+0x14000000;
-        // the low 2 GiB window matches [payload] dram_size.
-        reg = <0 0x80000000 0 0x80000000>;
+        // 0x80000000+0x37500000, 0xc0000000+0x140000000, 0x200000000+0x180000000.
+        // One flat 6 GiB window from 0x80000000 stays inside real DRAM and
+        // matches [payload] dram_size (mkadt rejects a mismatch).
+        // 0x180000000 needs 33 bits, so it is written as two cells:
+        // <address-hi address-lo size-hi size-lo>.
+        reg = <0 0x80000000 0x1 0x80000000>;
     };
 
     reserved-memory {
