@@ -1,0 +1,3 @@
+[submodule "drivers/ShengUfs"]
+	path = drivers/ShengUfs
+	url = https://github.com/iamOJZ/ShengUfs.git
