@@ -1,0 +1,127 @@
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -788,6 +788,108 @@
+ }
+ #endif /* HIBERNATION */
+ 
++
++/*
++ * haydn / SM8350: the SoC debug UART is a GENI (QUPv3) serial block at
++ * 0x0098C000, the same one XBL and the firmware drive as ttyMSM0. XBL leaves it
++ * programmed for 115200 8N1, so the kernel only has to pump the FIFO path; the
++ * register sequence below is the one the UEFI GeniUartSerialPortLib validated on
++ * this board (one byte per TX transaction, poll CMD_DONE, clear the IRQ).
++ */
++#define QCOM_GENI_UART_PA           0x0098C000UL
++
++#define QG_SE_GENI_DMA_MODE_EN      0x258
++#define QG_SE_GENI_M_CMD0           0x600
++#define QG_SE_GENI_M_IRQ_STATUS     0x610
++#define QG_SE_GENI_M_IRQ_EN         0x614
++#define QG_SE_GENI_M_IRQ_CLEAR      0x618
++#define QG_SE_GENI_TX_FIFOn         0x700
++#define QG_SE_GENI_TX_FIFO_STATUS   0x800
++#define QG_SE_GENI_TX_WATERMARK_REG 0x80c
++#define QG_SE_UART_TX_TRANS_LEN     0x270
++#define QG_UART_START_TX            1u
++#define QG_TX_FIFO_WC_MSK           0x0FFFFFFFu
++
++/* ~200 us at the 19.2 MHz architectural counter this SoC reports in CNTFRQ. */
++#define QG_BYTE_TIMEOUT_TICKS       3840
++
++static volatile uint32_t *gQcomGeniUart;
++
++static inline uint32_t
++qg_read(uint32_t off)
++{
++	return gQcomGeniUart[off >> 2];
++}
++
++static inline void
++qg_write(uint32_t off, uint32_t value)
++{
++	gQcomGeniUart[off >> 2] = value;
++}
++
++static inline uint64_t
++qg_ticks(void)
++{
++	uint64_t value;
++
++	__asm__ volatile ("mrs %0, cntvct_el0" : "=r" (value));
++	return value;
++}
++
++int
++qcom_geni_uart_init(void)
++{
++	if (gQcomGeniUart != NULL) {
++		return 1;
++	}
++	gQcomGeniUart = (volatile uint32_t *)ml_io_map(QCOM_GENI_UART_PA, 0x1000);
++	if (gQcomGeniUart == NULL) {
++		return 0;
++	}
++	qg_write(QG_SE_GENI_DMA_MODE_EN, 0);
++	qg_write(QG_SE_GENI_M_IRQ_EN, 0);
++	qg_write(QG_SE_GENI_M_IRQ_CLEAR, 0xFFFFFFFFu);
++	qg_write(QG_SE_GENI_TX_WATERMARK_REG, 2);
++	return 1;
++}
++
++static void
++qcom_geni_putc_raw(char c)
++{
++	uint64_t deadline;
++
++	deadline = qg_ticks() + QG_BYTE_TIMEOUT_TICKS;
++	while ((qg_read(QG_SE_GENI_TX_FIFO_STATUS) & QG_TX_FIFO_WC_MSK) >= 2) {
++		if (qg_ticks() > deadline) {
++			break;
++		}
++	}
++
++	qg_write(QG_SE_UART_TX_TRANS_LEN, 1);
++	qg_write(QG_SE_GENI_M_CMD0, QG_UART_START_TX << 27);
++	qg_write(QG_SE_GENI_TX_FIFOn, (uint32_t)(uint8_t)c);
++
++	deadline = qg_ticks() + QG_BYTE_TIMEOUT_TICKS;
++	while ((qg_read(QG_SE_GENI_M_IRQ_STATUS) & 1u) == 0) {
++		if (qg_ticks() > deadline) {
++			break;
++		}
++	}
++	qg_write(QG_SE_GENI_M_IRQ_CLEAR, 1u);
++}
++
++void
++qcom_geni_uart_putc(char c)
++{
++	if (gQcomGeniUart == NULL) {
++		return;
++	}
++	if (c == '\n') {
++		qcom_geni_putc_raw('\r');
++	}
++	qcom_geni_putc_raw(c);
++}
++
+ int
+ serial_init(void)
+ {
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -59,7 +59,12 @@
+ PE_init_kprintf(void)
+ {
+ 	if (boot_progress_active()) { PE_kputc = boot_progress_putc; return; }
+-	if (serial_init()) {
++	extern int  qcom_geni_uart_init(void);
++	extern void qcom_geni_uart_putc(char);
++
++	if (qcom_geni_uart_init()) {
++		PE_kputc = qcom_geni_uart_putc;
++	} else if (serial_init()) {
+ 		PE_kputc = serial_putc_crlf;
+ 	} else {
+ 		/**

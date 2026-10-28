@@ -1,4 +1,13 @@
 # haydn device XNU patch series.
 #
-# Empty on purpose: the first bring-up targets UEFI + UniXNU menu + DarwinBoot
-# hand-off with the shared ARM64 and SM8350 patch series only.
+# 0001: SM8350 runs the HLOS under QHEE with CNTHCTL_EL2.EL1PCEN clear, so the
+# physical timer registers are trapped and XNU arm_init faulted on its
+# CNTP_CTL_EL0 write before any console existed.
+# 0002: the SoC debug UART is a GENI block at 0x0098C000; give the kernel a
+# kprintf path over it so bring-up is never blind again.
+# 0003: panic_spin_forever spins on WFE after a panic and needs a manual power
+# hold (no PMGR to drive the watchdog). Issue a PSCI SYSTEM_RESET SMC instead so
+# a kernel panic reboots by itself; panic-psci-reset=0 disables it.
+0001-sm8350-el1pcen-physical-timer.patch
+0002-sm8350-geni-uart-console.patch
+0003-sm8350-panic-psci-reset.patch

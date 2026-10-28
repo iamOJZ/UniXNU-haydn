@@ -1,0 +1,39 @@
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index e9daeed..d5b9d28 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1239,6 +1239,34 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ void
+ panic_spin_forever(void)
+ {
++#if defined(__arm64__)
++	/*
++	 * haydn / SM8350: XNU normally resets via the AppleARMWatchdogTimer or
++	 * PEHaltRestart -> IOPMrootDomain, both of which need a real PMGR that this
++	 * port only stubs. Without them a panic spins forever and needs a manual
++	 * power-button hold. The boot chain (XBL -> QHEE) implements PSCI 0.2, so a
++	 * direct SMC SYSTEM_RESET reboots the device without the PMGR. The panic log
++	 * has already been flushed before this point. `panic-psci-reset=0` on the
++	 * command line keeps the original spin behaviour.
++	 */
++	{
++		static boolean_t reset_checked = FALSE;
++		static boolean_t do_reset = TRUE;
++		if (!reset_checked) {
++			int disable = 0;
++			if (PE_parse_boot_argn("panic-psci-reset", &disable, sizeof(disable)) && disable == 0) {
++				do_reset = FALSE;
++			}
++			reset_checked = TRUE;
++		}
++		if (do_reset) {
++			register uint64_t fn __asm__("x0") = 0x84000009ULL; /* PSCI SYSTEM_RESET */
++			__asm__ volatile("smc #0" : : "r"(fn) : "memory");
++			fn = 0x84000008ULL; /* PSCI SYSTEM_OFF fallback */
++			__asm__ volatile("smc #0" : : "r"(fn) : "memory");
++		}
++	}
++#endif
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
