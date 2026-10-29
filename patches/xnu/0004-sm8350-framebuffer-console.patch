@@ -1,0 +1,196 @@
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -878,9 +878,12 @@
+ 	qg_write(QG_SE_GENI_M_IRQ_CLEAR, 1u);
+ }
+ 
++static void haydn_fb_putc(char c);
++
+ void
+ qcom_geni_uart_putc(char c)
+ {
++	haydn_fb_putc(c);
+ 	if (gQcomGeniUart == NULL) {
+ 		return;
+ 	}
+@@ -888,6 +891,180 @@
+ 		qcom_geni_putc_raw('\r');
+ 	}
+ 	qcom_geni_putc_raw(c);
++}
++
++/*
++ * haydn / SM8350: mirror the kernel log onto the panel.
++ *
++ * DarwinBoot hands the GOP framebuffer over in boot args, so pexpert already has
++ * it in PE_state.video. Map that window once and draw the same 5x16 cell font
++ * DarwinBoot uses, scaled 3x: 1080 px / 18 px = 60 columns, 2400 px / 42 px =
++ * 57 rows. The panel is the only console a phone has, so a panic is visible
++ * without a serial adapter.
++ */
++#define HFB_SCALE      3
++#define HFB_CELL_W     (6 * HFB_SCALE)
++#define HFB_CELL_H     (14 * HFB_SCALE)
++#define HFB_FG         0xFFFFFFFFu
++#define HFB_BG         0xFF001018u
++
++static const uint64_t gHaydnFont[96] = {
++	0x0000000000000000ULL, 0x0842108000020084ULL, 0x0005294000000000ULL,
++	0x15F528000000295FULL, 0x1C52F88000023E94ULL, 0x088556400004D542ULL,
++	0x04528800000B2725ULL, 0x0002108000000000ULL, 0x0421108800821042ULL,
++	0x1084108200221108ULL, 0x0957548000000000ULL, 0x3E42000000000084ULL,
++	0x0000000000223000ULL, 0x3E00000000000000ULL, 0x0000000000471000ULL,
++	0x0884420000008442ULL, 0x2318A88000022A31ULL, 0x08429880000F9084ULL,
++	0x1108C5C0000F8444ULL, 0x1C4443E000074610ULL, 0x14A62100000423E9ULL,
++	0x26D087E000074610ULL, 0x1E10C5C000074631ULL, 0x088443E000010844ULL,
++	0x1D18C5C000074631ULL, 0x3D18C5C000074610ULL, 0x08E2000000471000ULL,
++	0x08E2000000223000ULL, 0x0222220000082082ULL, 0x01F00000000003E0ULL,
++	0x2082082000008888ULL, 0x1108C5C000020084ULL, 0x2B98C5C0000F05B5ULL,
++	0x2318A8800008C63FULL, 0x1D2949E00007CA52ULL, 0x0210C5C000074421ULL,
++	0x252949E00007CA52ULL, 0x1E1087E0000F8421ULL, 0x1E1087E000008421ULL,
++	0x0210C5C000074639ULL, 0x3F18C6200008C631ULL, 0x084211C000071084ULL,
++	0x1084238000032508ULL, 0x0654C6200008C525ULL, 0x02108420000F8421ULL,
++	0x2B5DC6200008C631ULL, 0x2B59CE200008C739ULL, 0x2318C5C000074631ULL,
++	0x1F18C5E000008421ULL, 0x2318C5C001075631ULL, 0x1F18C5E00008C525ULL,
++	0x1C10C5C000074610ULL, 0x084213E000021084ULL, 0x2318C62000074631ULL,
++	0x1518C6200002114AULL, 0x2B18C620000556B5ULL, 0x08A546200008C54AULL,
++	0x08A5462000021084ULL, 0x088443E0000F8442ULL, 0x0421084E00E10842ULL,
++	0x0821042000084108ULL, 0x1084210E00E42108ULL, 0x0008A88000000000ULL,
++	0x0000000001F00000ULL, 0x0000010400000000ULL, 0x20E00000000B663EULL,
++	0x22F084200007C631ULL, 0x22E0000000074421ULL, 0x23E84200000F4631ULL,
++	0x22E000000007443FULL, 0x1E21498000010842ULL, 0x22E000001D187A31ULL,
++	0x26D084200008C631ULL, 0x0860100000071084ULL, 0x10C020000C94A108ULL,
++	0x0A9084200008A4A3ULL, 0x084210C000071084ULL, 0x2AB000000008D6B5ULL,
++	0x26D000000008C631ULL, 0x22E0000000074631ULL, 0x22F000000210BE31ULL,
++	0x23E0000021087A31ULL, 0x26D0000000008421ULL, 0x22E0000000074506ULL,
++	0x04F1080000064842ULL, 0x23100000000B6631ULL, 0x2310000000022951ULL,
++	0x23100000000556B5ULL, 0x151000000008A884ULL, 0x231000001D185B31ULL,
++	0x11F00000000F8444ULL, 0x0642109801821084ULL, 0x0842108000021084ULL,
++	0x3042108300321084ULL, 0x0004D64000000000ULL, 0x0000000000000000ULL
++};
++
++static volatile uint32_t *gHaydnFb;
++static uint32_t gHaydnFbStride;
++static uint32_t gHaydnFbWidth;
++static uint32_t gHaydnFbHeight;
++static uint32_t gHaydnFbX;
++static uint32_t gHaydnFbY;
++
++static void
++haydn_fb_fill(uint32_t x, uint32_t y, uint32_t wide, uint32_t high, uint32_t color)
++{
++	uint32_t row, col;
++
++	for (row = 0; row < high && y + row < gHaydnFbHeight; row++) {
++		volatile uint32_t *line = gHaydnFb + (y + row) * gHaydnFbStride + x;
++		for (col = 0; col < wide && x + col < gHaydnFbWidth; col++) {
++			line[col] = color;
++		}
++	}
++}
++
++static void
++haydn_fb_scroll(void)
++{
++	uint32_t rows = gHaydnFbHeight - HFB_CELL_H;
++	uint32_t total = rows * gHaydnFbStride;
++	volatile uint32_t *dst = gHaydnFb;
++	volatile uint32_t *src = gHaydnFb + HFB_CELL_H * gHaydnFbStride;
++	uint32_t index;
++
++	for (index = 0; index < total; index++) {
++		dst[index] = src[index];
++	}
++	haydn_fb_fill(0, gHaydnFbHeight - HFB_CELL_H, gHaydnFbWidth, HFB_CELL_H, HFB_BG);
++	gHaydnFbY = gHaydnFbHeight - HFB_CELL_H;
++}
++
++static int
++haydn_fb_init(void)
++{
++	uint64_t size;
++
++	if (gHaydnFb != NULL) {
++		return 1;
++	}
++	if (PE_state.video.v_baseAddr == 0 || PE_state.video.v_rowBytes == 0 ||
++	    PE_state.video.v_width == 0 || PE_state.video.v_height == 0) {
++		return 0;
++	}
++	gHaydnFbWidth  = (uint32_t)PE_state.video.v_width;
++	gHaydnFbHeight = (uint32_t)PE_state.video.v_height;
++	gHaydnFbStride = (uint32_t)(PE_state.video.v_rowBytes >> 2);
++	size = (uint64_t)PE_state.video.v_rowBytes * gHaydnFbHeight;
++	size = (size + 0xFFFULL) & ~0xFFFULL;
++	gHaydnFb = (volatile uint32_t *)ml_io_map((vm_offset_t)PE_state.video.v_baseAddr, (vm_size_t)size);
++	if (gHaydnFb == NULL) {
++		return 0;
++	}
++	haydn_fb_fill(0, 0, gHaydnFbWidth, gHaydnFbHeight, HFB_BG);
++	gHaydnFbX = 0;
++	gHaydnFbY = 0;
++	return 1;
++}
++
++static void
++haydn_fb_newline(void)
++{
++	gHaydnFbX = 0;
++	gHaydnFbY += HFB_CELL_H;
++	if (gHaydnFbY + HFB_CELL_H > gHaydnFbHeight) {
++		haydn_fb_scroll();
++	}
++}
++
++static void
++haydn_fb_putc(char c)
++{
++	uint64_t glyph, bits;
++	uint32_t gy, gx, dy, dx, px, py;
++
++	if (!haydn_fb_init()) {
++		return;
++	}
++	if (c == '\r') {
++		gHaydnFbX = 0;
++		return;
++	}
++	if (c == '\n') {
++		haydn_fb_newline();
++		return;
++	}
++	if (c == '\t') {
++		for (gx = 0; gx < 4; gx++) {
++			haydn_fb_putc(' ');
++		}
++		return;
++	}
++	if ((unsigned char)c < 32 || (unsigned char)c > 126) {
++		return;
++	}
++	if (gHaydnFbX + HFB_CELL_W > gHaydnFbWidth) {
++		haydn_fb_newline();
++	}
++	haydn_fb_fill(gHaydnFbX, gHaydnFbY, HFB_CELL_W, HFB_CELL_H, HFB_BG);
++	glyph = gHaydnFont[(unsigned char)c - 32];
++	for (gy = 0; gy < 12; gy++) {
++		bits = (gy < 6) ? ((glyph >> 32) >> (gy * 5)) : ((glyph & 0xFFFFFFFFULL) >> ((gy - 6) * 5));
++		for (gx = 0; gx < 5; gx++) {
++			if (((bits >> gx) & 1u) == 0) {
++				continue;
++			}
++			for (dy = 0; dy < HFB_SCALE; dy++) {
++				for (dx = 0; dx < HFB_SCALE; dx++) {
++					px = gHaydnFbX + gx * HFB_SCALE + dx;
++					py = gHaydnFbY + HFB_SCALE + gy * HFB_SCALE + dy;
++					if (px < gHaydnFbWidth && py < gHaydnFbHeight) {
++						gHaydnFb[py * gHaydnFbStride + px] = HFB_FG;
++					}
++				}
++			}
++		}
++	}
++	gHaydnFbX += HFB_CELL_W;
+ }
+ 
+ int

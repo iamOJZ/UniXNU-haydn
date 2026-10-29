@@ -11,3 +11,4 @@
 0001-sm8350-el1pcen-physical-timer.patch
 0002-sm8350-geni-uart-console.patch
 0003-sm8350-panic-psci-reset.patch
+0004-sm8350-framebuffer-console.patch
