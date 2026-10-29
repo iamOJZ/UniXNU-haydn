@@ -122,11 +122,14 @@ if TOUCH_SOURCE.is_file() and GENI_SPI.is_file():
     compile_c(GENI_SPI, geni_obj)
 
 # cctools ar, not GNU ar: the kernel links with the Mach-O linker.
-ar = pathlib.Path("/opt/unixnu-linux/CommandLineTools/usr/bin/ar")
+_linux_ar = pathlib.Path("/opt/unixnu-linux/CommandLineTools/usr/bin/ar")
+# Linux uses the cctools port that ships with the UniXNU toolchain; a macOS host
+# has the Xcode archiver behind xcrun.
+ar = [str(_linux_ar)] if _linux_ar.is_file() else ["xcrun", "ar"]
 if ARCHIVE.exists():
     ARCHIVE.unlink()
 objects = [pmgr_obj, touch_obj, geni_obj]
 objects = [str(o) for o in objects if o.is_file()]
-subprocess.run([str(ar), "rcs", str(ARCHIVE), *objects], check=True)
+subprocess.run([*ar, "rcs", str(ARCHIVE), *objects], check=True)
 print(f"haydn-pmgr+touch: {ARCHIVE} ({ARCHIVE.stat().st_size} bytes, {len(objects)} objects)")
 
