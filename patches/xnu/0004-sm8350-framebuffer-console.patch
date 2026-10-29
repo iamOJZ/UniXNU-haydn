@@ -13,7 +13,7 @@
  	if (gQcomGeniUart == NULL) {
  		return;
  	}
-@@ -888,6 +891,180 @@
+@@ -888,6 +891,186 @@
  		qcom_geni_putc_raw('\r');
  	}
  	qcom_geni_putc_raw(c);
@@ -93,12 +93,12 @@
 +haydn_fb_scroll(void)
 +{
 +	uint32_t rows = gHaydnFbHeight - HFB_CELL_H;
-+	uint32_t total = rows * gHaydnFbStride;
-+	volatile uint32_t *dst = gHaydnFb;
-+	volatile uint32_t *src = gHaydnFb + HFB_CELL_H * gHaydnFbStride;
++	uint32_t words = (rows * gHaydnFbStride) >> 1;
++	volatile uint64_t *dst = (volatile uint64_t *)gHaydnFb;
++	volatile uint64_t *src = (volatile uint64_t *)(gHaydnFb + HFB_CELL_H * gHaydnFbStride);
 +	uint32_t index;
 +
-+	for (index = 0; index < total; index++) {
++	for (index = 0; index < words; index++) {
 +		dst[index] = src[index];
 +	}
 +	haydn_fb_fill(0, gHaydnFbHeight - HFB_CELL_H, gHaydnFbWidth, HFB_CELL_H, HFB_BG);
@@ -109,12 +109,17 @@
 +haydn_fb_init(void)
 +{
 +	uint64_t size;
++	int disable = 1;
 +
 +	if (gHaydnFb != NULL) {
 +		return 1;
 +	}
++	if (PE_parse_boot_argn("haydn-fb-console", &disable, sizeof(disable)) && disable == 0) {
++		return 0;
++	}
 +	if (PE_state.video.v_baseAddr == 0 || PE_state.video.v_rowBytes == 0 ||
-+	    PE_state.video.v_width == 0 || PE_state.video.v_height == 0) {
++	    PE_state.video.v_width == 0 || PE_state.video.v_height == 0 ||
++	    PE_state.video.v_depth != 32) {
 +		return 0;
 +	}
 +	gHaydnFbWidth  = (uint32_t)PE_state.video.v_width;
@@ -122,7 +127,9 @@
 +	gHaydnFbStride = (uint32_t)(PE_state.video.v_rowBytes >> 2);
 +	size = (uint64_t)PE_state.video.v_rowBytes * gHaydnFbHeight;
 +	size = (size + 0xFFFULL) & ~0xFFFULL;
-+	gHaydnFb = (volatile uint32_t *)ml_io_map((vm_offset_t)PE_state.video.v_baseAddr, (vm_size_t)size);
++	/* Write-combining: the panel is device memory and per-pixel coalescing is
++	 * what keeps a line of text cheap instead of thousands of posted writes. */
++	gHaydnFb = (volatile uint32_t *)ml_io_map_wcomb((vm_offset_t)PE_state.video.v_baseAddr, (vm_size_t)size);
 +	if (gHaydnFb == NULL) {
 +		return 0;
 +	}
@@ -171,7 +178,6 @@
 +	if (gHaydnFbX + HFB_CELL_W > gHaydnFbWidth) {
 +		haydn_fb_newline();
 +	}
-+	haydn_fb_fill(gHaydnFbX, gHaydnFbY, HFB_CELL_W, HFB_CELL_H, HFB_BG);
 +	glyph = gHaydnFont[(unsigned char)c - 32];
 +	for (gy = 0; gy < 12; gy++) {
 +		bits = (gy < 6) ? ((glyph >> 32) >> (gy * 5)) : ((glyph & 0xFFFFFFFFULL) >> ((gy - 6) * 5));

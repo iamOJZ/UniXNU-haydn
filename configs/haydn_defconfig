@@ -25,11 +25,21 @@ CONFIG_XNU_SHENG_PMGR=y
 # refusal-only placeholder: zero policies, crypto that always fails, so no byte is
 # ever authenticated. That keeps the hardware probes usable
 # (native-ufs-probe=2/10/11) without pretending to have a trust root.
-# The driver subclasses IOBlockStorageDevice, which lives in the IOStorageFamily
-# kext rather than in the kernel. build-haydn-storage-abi.py compiles Apple's own
-# IOBlockStorageDevice.cpp from the pinned refer/IOStorageFamily revision so the
-# class symbols are the genuine ones instead of recorded in-kernel addresses.
+# The block/root layer is compiled out for bring-up. IOBlockStorageDevice lives in
+# the IOStorageFamily kext that this prelinked kernel already carries; compiling a
+# second copy into __kernel__ panics on iOS with a duplicate class name
+# (OSMetaClass.cpp:896), and binding to the kext's loaded addresses needs the
+# interface-audit recording this board has no evidence for. The hardware probes
+# (native-ufs-probe=2/7/8/10/11) do not touch that layer.
+#
+# build-haydn-storage-abi.py stays in the repository but must not be linked while
+# this is set; re-enabling the root path requires the audited binding, not a
+# recompile.
 CONFIG_XNU_NATIVE_UFS=y
-CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/haydn-storage-abi/libHaydnStorageABI.a -Wl,-force_load,{tree}/build/haydn-root-stub/libHaydnRootStub.a"
+CONFIG_XNU_UFS_PROBE_ONLY=y
+# SM8350's GCC ends at 0x9c100 and has no UFS MEM PHY GDSC block; the SM8550
+# 0x9e000 read in NativeUfs::inspect() is a synchronous external abort here.
+CONFIG_XNU_UFS_SM8350=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/haydn-root-stub/libHaydnRootStub.a"
 # GPU and display drivers are not adapted for haydn yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set

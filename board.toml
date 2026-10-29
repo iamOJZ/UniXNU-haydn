@@ -26,12 +26,12 @@ archives = [
   "build-mockfs-fixture.py",
   "build-libpthread-kernel.py",
   "build-haydn-platform-power.py",
-  # IOBlockStorageDevice comes from the IOStorageFamily kext, not the kernel, so a
-  # kernel link that includes NativeUfs needs the class symbols. Build Apple's own
-  # public IOBlockStorageDevice.cpp from the pinned refer tree instead of binding to
-  # recorded addresses inside the shipped prelinked kernel (that needs the
-  # interface-audit.json recording, which this board has no evidence for).
-  "build-haydn-storage-abi.py",
+  # build-haydn-storage-abi.py is intentionally not linked. Compiling Apple's
+  # IOBlockStorageDevice into __kernel__ duplicates the class the prelinked
+  # IOStorageFamily kext already registers, and iOS panics on that. The board
+  # therefore builds the driver with HAYDN_UFS_PROBE_ONLY (configs/haydn_defconfig).
+  # Re-adding this entry only helps once the audited storage binding exists.
+  # "build-haydn-storage-abi.py",
   # Refusal-only owner-root placeholder. ShengUfs is built with
   # NATIVE_VERIFIED_BLOCK=1, so its verified paths reference symbols that only the
   # audited libVerifiedRootProbe.a defines; that archive needs a prior audit of the
