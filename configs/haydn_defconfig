@@ -15,10 +15,21 @@ CONFIG_XNU_DT_PANIC_REGION=y
 # Publish a provider-less ApplePMGRNub from bsd_init so AMFI's
 # ConfigurationSettings latch succeeds (haydn_pmgr in package/).
 CONFIG_XNU_SHENG_PMGR=y
-# SM8350 UFS transport (fork of ShengUfs, drivers/ShengUfs). When enabled it
-# force-loads build/sheng-ufs/libShengUfs.a and defines XNU_NATIVE_UFS=1. Left
-# off until the macOS runner produces the storage ABI bindings it links against
-# (VirtioMmioBlock/RamBlock/VerifiedRoot -> interface-audit.json via dwarfdump).
-# CONFIG_XNU_NATIVE_UFS is not set
+# SM8350 UFS transport (fork of ShengUfs, drivers/ShengUfs). Enabling it
+# force-loads build/sheng-ufs/libShengUfs.a and defines XNU_NATIVE_UFS=1.
+#
+# The driver is compiled with NATIVE_VERIFIED_BLOCK=1, so the verified-block paths
+# reference the owner-root symbols that only the audited libVerifiedRootProbe.a
+# defines (that archive comes from a prior audit of the real OS image, which this
+# board has no evidence for). build-haydn-root-stub.py supplies them as a
+# refusal-only placeholder: zero policies, crypto that always fails, so no byte is
+# ever authenticated. That keeps the hardware probes usable
+# (native-ufs-probe=2/10/11) without pretending to have a trust root.
+# The driver subclasses IOBlockStorageDevice, which lives in the IOStorageFamily
+# kext rather than in the kernel. build-haydn-storage-abi.py compiles Apple's own
+# IOBlockStorageDevice.cpp from the pinned refer/IOStorageFamily revision so the
+# class symbols are the genuine ones instead of recorded in-kernel addresses.
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/haydn-storage-abi/libHaydnStorageABI.a -Wl,-force_load,{tree}/build/haydn-root-stub/libHaydnRootStub.a"
 # GPU and display drivers are not adapted for haydn yet.
 # CONFIG_XNU_NATIVE_ADRENO is not set
